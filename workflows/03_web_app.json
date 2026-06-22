@@ -1,0 +1,201 @@
+{
+  "name": "03 - Web App (Lista de la Compra)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "lista",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-lista",
+      "name": "GET /lista",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 200],
+      "webhookId": "lista-html"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lee el HTML de la web app y lo sirve\nconst fs = require('fs');\nconst path = require('path');\n\n// Obtener el BOT_USERNAME de la variable de entorno\nconst botUsername = process.env.BOT_USERNAME || 'tu_bot';\nconst listId = $input.item.json.query?.id || '';\n\n// Leer el HTML desde el archivo\nconst htmlPath = path.join(process.env.HOME || '/tmp', 'Desktop', 'bot-recetas', 'web', 'index.html');\nlet html = fs.readFileSync(htmlPath, 'utf8');\n\n// Inyectar el listId y botUsername en el HTML si no vienen por query param\n// (El HTML ya los lee de los query params, así que solo servimos el archivo)\n\nreturn [{ json: { html, contentType: 'text/html; charset=utf-8' } }];"
+      },
+      "id": "serve-html",
+      "name": "Servir HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "text/html; charset=utf-8" }
+            ]
+          }
+        }
+      },
+      "id": "respond-html",
+      "name": "Responder HTML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 200]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "lista-data",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-data",
+      "name": "GET /lista-data",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "webhookId": "lista-data"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Devuelve los datos de la lista como JSON\nconst fs = require('fs');\nconst path = require('path');\n\nconst listId = $input.item.json.query?.id;\nconst DATA_FILE = path.join(process.env.HOME || '/tmp', '.n8n', 'bot_recetas.json');\n\nif (!listId) {\n  return [{ json: { error: 'Se requiere ?id=', recetas: [] } }];\n}\n\nlet db;\ntry {\n  db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));\n} catch(e) {\n  return [{ json: { recetas: [] } }];\n}\n\n// Buscar la lista en todos los usuarios\nlet lista = { recetas: [] };\nfor (const uid of Object.keys(db.users || {})) {\n  const user = db.users[uid];\n  if (user.lista_id === listId && user.listas?.[listId]) {\n    lista = user.listas[listId];\n    break;\n  }\n}\n\nreturn [{ json: lista }];"
+      },
+      "id": "get-data",
+      "name": "Obtener Datos Lista",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "application/json" },
+              { "name": "Access-Control-Allow-Origin", "value": "*" }
+            ]
+          }
+        }
+      },
+      "id": "respond-data",
+      "name": "Responder JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 400]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lista-toggle",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-toggle",
+      "name": "POST /lista-toggle",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 600],
+      "webhookId": "lista-toggle"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Marca o desmarca un ingrediente\nconst fs = require('fs');\nconst path = require('path');\n\nconst body = $input.item.json.body || {};\nconst { listId, recipeId, ingId, checked } = body;\nconst DATA_FILE = path.join(process.env.HOME || '/tmp', '.n8n', 'bot_recetas.json');\n\nlet db;\ntry {\n  db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));\n} catch(e) {\n  return [{ json: { ok: false, error: 'DB no encontrada' } }];\n}\n\n// Buscar y actualizar el ingrediente\nlet updated = false;\nfor (const uid of Object.keys(db.users || {})) {\n  const user = db.users[uid];\n  if (user.lista_id === listId && user.listas?.[listId]) {\n    const lista = user.listas[listId];\n    const receta = lista.recetas.find(r => r.id === recipeId);\n    if (receta) {\n      const ing = receta.ingredientes.find(i => i.id === ingId);\n      if (ing) {\n        ing.checked = Boolean(checked);\n        updated = true;\n      }\n    }\n    break;\n  }\n}\n\nif (updated) fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));\n\nreturn [{ json: { ok: updated } }];"
+      },
+      "id": "toggle-item",
+      "name": "Toggle Ingrediente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 600]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              { "name": "Access-Control-Allow-Origin", "value": "*" }
+            ]
+          }
+        }
+      },
+      "id": "respond-toggle",
+      "name": "Responder Toggle OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 600]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lista-eliminar",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-eliminar",
+      "name": "POST /lista-eliminar",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 800],
+      "webhookId": "lista-eliminar"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Elimina una receta entera de la lista\nconst fs = require('fs');\nconst path = require('path');\n\nconst body = $input.item.json.body || {};\nconst { listId, recipeId } = body;\nconst DATA_FILE = path.join(process.env.HOME || '/tmp', '.n8n', 'bot_recetas.json');\n\nlet db;\ntry {\n  db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));\n} catch(e) {\n  return [{ json: { ok: false, error: 'DB no encontrada' } }];\n}\n\nlet updated = false;\nfor (const uid of Object.keys(db.users || {})) {\n  const user = db.users[uid];\n  if (user.lista_id === listId && user.listas?.[listId]) {\n    const lista = user.listas[listId];\n    const antes = lista.recetas.length;\n    lista.recetas = lista.recetas.filter(r => r.id !== recipeId);\n    updated = lista.recetas.length < antes;\n    break;\n  }\n}\n\nif (updated) fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));\n\nreturn [{ json: { ok: updated } }];"
+      },
+      "id": "remove-recipe",
+      "name": "Eliminar Receta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 800]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              { "name": "Access-Control-Allow-Origin", "value": "*" }
+            ]
+          }
+        }
+      },
+      "id": "respond-eliminar",
+      "name": "Responder Eliminar OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 800]
+    }
+  ],
+  "connections": {
+    "GET /lista": {
+      "main": [[{ "node": "Servir HTML", "type": "main", "index": 0 }]]
+    },
+    "Servir HTML": {
+      "main": [[{ "node": "Responder HTML", "type": "main", "index": 0 }]]
+    },
+    "GET /lista-data": {
+      "main": [[{ "node": "Obtener Datos Lista", "type": "main", "index": 0 }]]
+    },
+    "Obtener Datos Lista": {
+      "main": [[{ "node": "Responder JSON", "type": "main", "index": 0 }]]
+    },
+    "POST /lista-toggle": {
+      "main": [[{ "node": "Toggle Ingrediente", "type": "main", "index": 0 }]]
+    },
+    "Toggle Ingrediente": {
+      "main": [[{ "node": "Responder Toggle OK", "type": "main", "index": 0 }]]
+    },
+    "POST /lista-eliminar": {
+      "main": [[{ "node": "Eliminar Receta", "type": "main", "index": 0 }]]
+    },
+    "Eliminar Receta": {
+      "main": [[{ "node": "Responder Eliminar OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}

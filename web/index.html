@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lista de la Compra 🛒</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; color: #1a1a1a; min-height: 100vh; }
+
+    /* ── Header ── */
+    .header { background: linear-gradient(135deg, #1976D2, #42A5F5); color: white; padding: 16px 20px; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+    .header h1 { font-size: 20px; font-weight: 700; }
+    .header-sub { font-size: 12px; opacity: 0.85; margin-top: 3px; }
+    .progress-summary { font-size: 12px; opacity: 0.9; margin-top: 6px; }
+    .progress-bar-header { background: rgba(255,255,255,0.3); border-radius: 10px; height: 4px; margin-top: 6px; }
+    .progress-bar-fill { background: white; height: 100%; border-radius: 10px; transition: width 0.4s ease; }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; background: white; box-shadow: 0 1px 0 #e0e0e0; }
+    .tab { flex: 1; padding: 13px 0; text-align: center; cursor: pointer; font-size: 14px; font-weight: 500; color: #666; border-bottom: 3px solid transparent; transition: all 0.2s; }
+    .tab.active { color: #1976D2; border-bottom-color: #1976D2; }
+    .tab:hover:not(.active) { background: #f5f5f5; }
+
+    /* ── Content ── */
+    .content { padding: 16px; max-width: 640px; margin: 0 auto; }
+
+    /* ── Recipe Card ── */
+    .recipe-card { background: white; border-radius: 14px; margin-bottom: 14px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); transition: box-shadow 0.2s; }
+    .recipe-card:hover { box-shadow: 0 3px 12px rgba(0,0,0,0.12); }
+
+    .recipe-header { padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+    .recipe-title { font-weight: 700; font-size: 16px; }
+    .recipe-meta { font-size: 12px; color: #888; margin-top: 2px; }
+    .recipe-right { display: flex; align-items: center; gap: 8px; }
+    .recipe-count { font-size: 13px; color: #1976D2; font-weight: 600; background: #E3F2FD; padding: 3px 8px; border-radius: 12px; }
+    .btn-delete { background: none; border: none; cursor: pointer; color: #e53935; font-size: 17px; padding: 4px 6px; border-radius: 8px; transition: background 0.2s; }
+    .btn-delete:hover { background: #FFEBEE; }
+    .chevron { font-size: 12px; color: #bbb; transition: transform 0.25s; }
+    .recipe-card.collapsed .chevron { transform: rotate(-90deg); }
+    .recipe-card.collapsed .ingredient-list { display: none; }
+
+    /* ── Progress bar ── */
+    .card-progress { background: #f0f0f0; height: 3px; }
+    .card-progress-fill { background: #4CAF50; height: 100%; transition: width 0.4s; }
+
+    /* ── Ingredient items ── */
+    .ingredient-list { border-top: 1px solid #f5f5f5; }
+    .ingredient-item { display: flex; align-items: center; padding: 11px 16px; border-bottom: 1px solid #fafafa; gap: 12px; transition: background 0.15s; }
+    .ingredient-item:last-child { border-bottom: none; }
+    .ingredient-item:hover { background: #fafafa; }
+    .ingredient-item input[type=checkbox] { width: 20px; height: 20px; cursor: pointer; accent-color: #1976D2; flex-shrink: 0; }
+    .ing-name { flex: 1; font-size: 15px; transition: all 0.2s; }
+    .ing-name.done { text-decoration: line-through; color: #bbb; }
+    .ing-sub { font-size: 11px; color: #FF7043; margin-top: 1px; }
+    .ing-qty { font-size: 13px; color: #999; white-space: nowrap; font-weight: 500; }
+
+    /* ── Consolidated view ── */
+    .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 700; color: #999; padding: 16px 4px 8px; }
+    .section-label.done-label { color: #4CAF50; }
+
+    /* ── Empty state ── */
+    .empty-state { text-align: center; padding: 80px 24px; }
+    .empty-icon { font-size: 64px; margin-bottom: 16px; }
+    .empty-title { font-size: 18px; font-weight: 600; color: #444; margin-bottom: 8px; }
+    .empty-sub { font-size: 14px; color: #888; line-height: 1.5; }
+
+    /* ── Add button ── */
+    .add-btn { display: flex; align-items: center; justify-content: center; gap: 8px; background: #1976D2; color: white; border: none; padding: 15px 24px; border-radius: 28px; font-size: 15px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 8px; margin-bottom: 24px; box-shadow: 0 3px 10px rgba(25,118,210,0.4); transition: all 0.2s; }
+    .add-btn:hover { background: #1565C0; transform: translateY(-1px); box-shadow: 0 5px 15px rgba(25,118,210,0.4); }
+
+    /* ── Toast ── */
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #323232; color: white; padding: 10px 22px; border-radius: 22px; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity 0.25s; z-index: 999; white-space: nowrap; }
+    .toast.visible { opacity: 1; }
+
+    /* ── Loading ── */
+    .loading { text-align: center; padding: 60px; color: #aaa; font-size: 16px; }
+    .spinner { width: 36px; height: 36px; border: 3px solid #e0e0e0; border-top-color: #1976D2; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🛒 Lista de la Compra</h1>
+  <div class="header-sub" id="header-sub">Cargando...</div>
+  <div class="progress-summary" id="progress-text"></div>
+  <div class="progress-bar-header"><div class="progress-bar-fill" id="progress-bar" style="width:0%"></div></div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('recetas')" id="tab-recetas">🍽 Por receta</div>
+  <div class="tab" onclick="switchTab('consolidada')" id="tab-consolidada">📋 Consolidada</div>
+</div>
+
+<div id="view-recetas" class="content"></div>
+<div id="view-consolidada" class="content" style="display:none"></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const listId = params.get('id');
+const BOT_USERNAME = params.get('bot') || 'tu_bot';
+const API = location.origin;
+
+let data = { recetas: [] };
+let activeTab = 'recetas';
+
+// ─── Data loading ─────────────────────────────────────────────────
+async function load() {
+  if (!listId) { showError('No se especificó ID de lista'); return; }
+  try {
+    const r = await fetch(`${API}/webhook/lista-data?id=${listId}`);
+    if (!r.ok) throw new Error('Error ' + r.status);
+    data = await r.json();
+    render();
+  } catch(e) {
+    showError('No se pudo cargar la lista. ¿Está n8n activo?');
+  }
+}
+
+function showError(msg) {
+  document.getElementById('view-recetas').innerHTML = `
+    <div class="empty-state">
+      <div class="empty-icon">❌</div>
+      <div class="empty-title">${msg}</div>
+    </div>`;
+}
+
+// ─── Rendering ────────────────────────────────────────────────────
+function render() {
+  const recetas = data.recetas || [];
+  const total = recetas.reduce((s, r) => s + r.ingredientes.length, 0);
+  const done  = recetas.reduce((s, r) => s + r.ingredientes.filter(i => i.checked).length, 0);
+  const pct   = total > 0 ? Math.round(done / total * 100) : 0;
+
+  document.getElementById('header-sub').textContent =
+    `${recetas.length} receta${recetas.length !== 1 ? 's' : ''} · ${total} ingrediente${total !== 1 ? 's' : ''}`;
+  document.getElementById('progress-text').textContent =
+    total > 0 ? `${done} de ${total} en el carro (${pct}%)` : '';
+  document.getElementById('progress-bar').style.width = pct + '%';
+
+  renderRecetas(recetas);
+  renderConsolidada(recetas);
+}
+
+function renderRecetas(recetas) {
+  const el = document.getElementById('view-recetas');
+  if (!recetas.length) {
+    el.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🍽</div>
+        <div class="empty-title">Lista vacía</div>
+        <div class="empty-sub">Pídele una receta al bot y aquí aparecerá tu lista de la compra.</div>
+      </div>`;
+    return;
+  }
+
+  el.innerHTML = recetas.map(rec => {
+    const tot = rec.ingredientes.length;
+    const chk = rec.ingredientes.filter(i => i.checked).length;
+    const pct = tot > 0 ? chk / tot * 100 : 0;
+
+    return `
+      <div class="recipe-card" id="card-${rec.id}">
+        <div class="recipe-header" onclick="toggleCard('${rec.id}')">
+          <div>
+            <div class="recipe-title">${esc(rec.receta)}</div>
+            <div class="recipe-meta">Para ${rec.personas} persona${rec.personas !== 1 ? 's' : ''}</div>
+          </div>
+          <div class="recipe-right">
+            <span class="recipe-count">${chk}/${tot}</span>
+            <button class="btn-delete" onclick="event.stopPropagation(); deleteRecipe('${rec.id}', '${esc(rec.receta)}')" title="Eliminar receta">🗑</button>
+            <span class="chevron">▼</span>
+          </div>
+        </div>
+        <div class="card-progress"><div class="card-progress-fill" style="width:${pct}%"></div></div>
+        <div class="ingredient-list">
+          ${rec.ingredientes.map(ing => `
+            <div class="ingredient-item" id="item-${ing.id}">
+              <input type="checkbox" id="chk-${ing.id}" ${ing.checked ? 'checked' : ''}
+                onchange="toggleItem('${rec.id}', '${ing.id}', this.checked)">
+              <label for="chk-${ing.id}" style="flex:1;cursor:pointer">
+                <div class="ing-name ${ing.checked ? 'done' : ''}">${esc(ing.nombre)}</div>
+                ${ing.sustituido ? `<div class="ing-sub">✱ sustituido de ${esc(ing.original)}</div>` : ''}
+              </label>
+              <span class="ing-qty">${fmtQty(ing)}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML += addBtn();
+}
+
+function renderConsolidada(recetas) {
+  const el = document.getElementById('view-consolidada');
+  if (!recetas.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">Sin ingredientes</div></div>';
+    return;
+  }
+
+  // Merge ingredients by name
+  const map = {};
+  recetas.forEach(rec => {
+    rec.ingredientes.forEach(ing => {
+      const key = ing.nombre.trim().toLowerCase();
+      if (map[key]) {
+        map[key].recetas.push(rec.receta);
+        // Sum quantities if same unit
+        if (ing.unidad && map[key].unidad === ing.unidad && ing.cantidad != null) {
+          map[key].cantidad = (parseFloat(map[key].cantidad) || 0) + parseFloat(ing.cantidad);
+        }
+        // Only checked if ALL instances are checked
+        if (!ing.checked) map[key].checked = false;
+        // Keep refs for toggling
+        map[key].refs.push({ recipeId: rec.id, ingId: ing.id });
+      } else {
+        map[key] = {
+          nombre: ing.nombre,
+          cantidad: ing.cantidad,
+          unidad: ing.unidad,
+          checked: ing.checked,
+          recetas: [rec.receta],
+          refs: [{ recipeId: rec.id, ingId: ing.id }]
+        };
+      }
+    });
+  });
+
+  const items = Object.values(map);
+  const pending = items.filter(i => !i.checked);
+  const done    = items.filter(i => i.checked);
+
+  let html = '';
+
+  if (pending.length) {
+    html += `<div class="recipe-card"><div class="ingredient-list">` +
+      pending.map(ing => consolidatedItem(ing)).join('') +
+      `</div></div>`;
+  }
+
+  if (done.length) {
+    html += `<div class="section-label done-label">✓ Ya en el carro</div>`;
+    html += `<div class="recipe-card" style="opacity:0.6"><div class="ingredient-list">` +
+      done.map(ing => consolidatedItem(ing)).join('') +
+      `</div></div>`;
+  }
+
+  el.innerHTML = html + addBtn();
+}
+
+function consolidatedItem(ing) {
+  const key = ing.nombre.trim().toLowerCase();
+  return `
+    <div class="ingredient-item">
+      <input type="checkbox" id="cons-${key}" ${ing.checked ? 'checked' : ''}
+        onchange="toggleConsolidated('${key}', this.checked, ${JSON.stringify(ing.refs)})">
+      <label for="cons-${key}" style="flex:1;cursor:pointer">
+        <div class="ing-name ${ing.checked ? 'done' : ''}">${esc(ing.nombre)}</div>
+        <div class="ing-sub" style="color:#999">${ing.recetas.join(' · ')}</div>
+      </label>
+      <span class="ing-qty">${fmtQty(ing)}</span>
+    </div>`;
+}
+
+function addBtn() {
+  return `<button class="add-btn" onclick="openBot()">+ Añadir otra receta</button>`;
+}
+
+// ─── Actions ──────────────────────────────────────────────────────
+function toggleCard(id) {
+  document.getElementById('card-' + id)?.classList.toggle('collapsed');
+}
+
+async function toggleItem(recipeId, ingId, checked) {
+  // Optimistic update
+  const rec = data.recetas.find(r => r.id === recipeId);
+  if (rec) { const ing = rec.ingredientes.find(i => i.id === ingId); if (ing) ing.checked = checked; }
+  render();
+  toast(checked ? '✓ Añadido al carro' : 'Quitado del carro');
+
+  try {
+    await fetch(`${API}/webhook/lista-toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ listId, recipeId, ingId, checked })
+    });
+  } catch(e) { /* silent fail, reload will sync */ }
+}
+
+async function toggleConsolidated(key, checked, refs) {
+  // Update all matching items
+  refs.forEach(({ recipeId, ingId }) => {
+    const rec = data.recetas.find(r => r.id === recipeId);
+    if (rec) { const ing = rec.ingredientes.find(i => i.id === ingId); if (ing) ing.checked = checked; }
+  });
+  render();
+  toast(checked ? '✓ Añadido al carro' : 'Quitado del carro');
+
+  await Promise.allSettled(refs.map(({ recipeId, ingId }) =>
+    fetch(`${API}/webhook/lista-toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ listId, recipeId, ingId, checked })
+    })
+  ));
+}
+
+async function deleteRecipe(recipeId, nombre) {
+  if (!confirm(`¿Eliminar "${nombre}" de la lista?`)) return;
+  data.recetas = data.recetas.filter(r => r.id !== recipeId);
+  render();
+  toast('Receta eliminada');
+
+  try {
+    await fetch(`${API}/webhook/lista-eliminar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ listId, recipeId })
+    });
+  } catch(e) {}
+}
+
+function openBot() {
+  window.open(`https://t.me/${BOT_USERNAME}`, '_blank');
+}
+
+// ─── UI helpers ───────────────────────────────────────────────────
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById('tab-recetas').classList.toggle('active', tab === 'recetas');
+  document.getElementById('tab-consolidada').classList.toggle('active', tab === 'consolidada');
+  document.getElementById('view-recetas').style.display = tab === 'recetas' ? '' : 'none';
+  document.getElementById('view-consolidada').style.display = tab === 'consolidada' ? '' : 'none';
+}
+
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('visible'), 2000);
+}
+
+function fmtQty(ing) {
+  if (!ing.cantidad && !ing.unidad) return '';
+  const qty = ing.cantidad != null ? (Number.isInteger(ing.cantidad) ? ing.cantidad : parseFloat(ing.cantidad.toFixed(1))) : '';
+  return `${qty}${ing.unidad ? ' ' + ing.unidad : ''}`.trim();
+}
+
+function esc(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── Init ─────────────────────────────────────────────────────────
+document.getElementById('view-recetas').innerHTML = '<div class="loading"><div class="spinner"></div>Cargando tu lista...</div>';
+load();
+
+// Auto-refresh every 30 seconds
+setInterval(load, 30000);
+</script>
+</body>
+</html>

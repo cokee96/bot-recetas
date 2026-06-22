@@ -1,0 +1,311 @@
+{
+  "name": "02 - Bot Recetas (Principal + Web App)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message", "callback_query"],
+        "additionalFields": {}
+      },
+      "id": "tg-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "bot-recetas-main",
+      "credentials": {
+        "telegramApi": { "id": "1", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.item.json;\nlet chatId, text, isCallback, callbackData, callbackQueryId;\n\nif (raw.callback_query) {\n  chatId = raw.callback_query.from.id;\n  callbackData = raw.callback_query.data;\n  callbackQueryId = raw.callback_query.id;\n  isCallback = true;\n  text = null;\n} else if (raw.message) {\n  chatId = raw.message.chat.id;\n  text = (raw.message.text || '').trim();\n  isCallback = false;\n} else {\n  return [{ json: { action: 'ignore' } }];\n}\n\nconst sd = $getWorkflowStaticData('global');\nif (!sd.users) sd.users = {};\nconst uid = String(chatId);\nif (!sd.users[uid]) {\n  sd.users[uid] = {\n    personas_default: null,\n    vetos: [],\n    sustituciones: {},\n    estado: null,\n    estado_data: null,\n    lista_id: null,\n    listas: {},\n    pending_recipe: null\n  };\n}\nconst user = sd.users[uid];\n\nlet response = null;\nlet replyMarkup = null;\nlet answerCallbackId = callbackQueryId || null;\n\nif (isCallback) {\n  const pending = user.pending_recipe;\n  if (callbackData === 'add_recipe' && pending) {\n    if (!user.lista_id) user.lista_id = Math.random().toString(36).substr(2, 9);\n    if (!user.listas[user.lista_id]) user.listas[user.lista_id] = { recetas: [] };\n    user.listas[user.lista_id].recetas.push(pending);\n    user.pending_recipe = null;\n    const base = $env.WEBHOOK_URL || 'http://localhost:5678';\n    const bot = $env.BOT_USERNAME || '';\n    const url = `${base}/webhook/lista?id=${user.lista_id}${bot ? '&bot=' + bot : ''}`;\n    response = `✅ ¡Añadido a tu lista!\\n\\n🛒 *Lista de la compra:*\\n${url}\\n\\nPuedes añadir más recetas cuando quieras.`;\n  } else if (callbackData === 'skip_recipe') {\n    user.pending_recipe = null;\n    response = 'De acuerdo 😊 Dime otra receta cuando quieras.';\n  } else {\n    response = 'No encontré la receta pendiente. Pide la receta de nuevo.';\n  }\n}\nelse if (text === '/start' || text === '/help') {\n  response = `👋 ¡Hola! Soy tu asistente de recetas y lista de la compra.\\n\\n*Cómo funciona:*\\n1️⃣ Dime para cuántas personas cocinas\\n2️⃣ Pídeme una receta (_pollo con almendras_)\\n3️⃣ Confirma si añadirla a la lista\\n4️⃣ Abre el link para ir marcando en el supermercado\\n\\n*Comandos:*\\n/sustitucion — sustituir un ingrediente\\n/vetar — vetar un ingrediente\\n/perfil — ver tus preferencias\\n/reset — cambiar nº de personas\\n/nueva — empezar lista nueva\\n/eliminar [receta] — quitar receta de la lista`;\n}\nelse if (text === '/sustitucion') {\n  user.estado = 'esperando_ingrediente';\n  response = '🔄 ¿Qué ingrediente NO quieres en tus recetas?';\n}\nelse if (text && text.startsWith('/vetar')) {\n  const ing = text.replace('/vetar', '').trim().toLowerCase();\n  if (!ing) {\n    response = 'Usa: /vetar pimiento';\n  } else {\n    if (!user.vetos.includes(ing)) user.vetos.push(ing);\n    response = `🚫 *${ing}* vetado.\\n\\nVe tus preferencias con /perfil`;\n  }\n}\nelse if (text === '/perfil') {\n  const v = user.vetos.length ? user.vetos.map(x => `• ${x}`).join('\\n') : '• ninguno';\n  const s = Object.keys(user.sustituciones).length\n    ? Object.entries(user.sustituciones).map(([k, val]) => `• ${k} → ${val}`).join('\\n')\n    : '• ninguna';\n  const lista = user.lista_id && user.listas[user.lista_id]\n    ? user.listas[user.lista_id].recetas.map(r => `• ${r.receta}`).join('\\n') || '• (vacía)'\n    : '• (vacía)';\n  response = `👤 *Tu perfil*\\n\\n👥 Personas: ${user.personas_default || 'no configurado'}\\n\\n🚫 Vetados:\\n${v}\\n\\n🔄 Sustituciones:\\n${s}\\n\\n📋 Lista actual:\\n${lista}`;\n}\nelse if (text === '/reset') {\n  user.personas_default = null;\n  response = '🔄 ¿Para cuántas personas ahora?';\n}\nelse if (text === '/nueva') {\n  user.lista_id = null;\n  user.pending_recipe = null;\n  response = '🗑 Lista borrada. Dime qué receta quieres:';\n}\nelse if (text && text.startsWith('/eliminar')) {\n  const nombre = text.replace('/eliminar', '').trim();\n  if (!nombre) {\n    response = 'Usa: /eliminar carbonara';\n  } else if (!user.lista_id || !user.listas[user.lista_id]?.recetas?.length) {\n    response = 'Tu lista está vacía.';\n  } else {\n    const lista = user.listas[user.lista_id];\n    const antes = lista.recetas.length;\n    lista.recetas = lista.recetas.filter(r => !r.receta.toLowerCase().includes(nombre.toLowerCase()));\n    response = lista.recetas.length < antes\n      ? '🗑 Receta eliminada.'\n      : `No encontré esa receta. Lista: ${user.listas[user.lista_id].recetas.map(r=>r.receta).join(', ')}`;\n  }\n}\nelse if (user.estado === 'esperando_ingrediente') {\n  user.estado_data = text.toLowerCase().trim();\n  user.estado = 'esperando_sustituto';\n  response = `¿Con qué sustituimos *${text}*?\\n(escribe _nada_ para vetarlo directamente)`;\n}\nelse if (user.estado === 'esperando_sustituto') {\n  const ing = user.estado_data;\n  if (text.toLowerCase() === 'nada') {\n    if (!user.vetos.includes(ing)) user.vetos.push(ing);\n    response = `🚫 *${ing}* vetado. Verifica con /perfil`;\n  } else {\n    user.sustituciones[ing] = text.toLowerCase().trim();\n    response = `✅ Guardado: *${ing}* → *${text}*. Verifica con /perfil`;\n  }\n  user.estado = null;\n  user.estado_data = null;\n}\nelse if (!user.personas_default) {\n  const num = parseInt(text);\n  if (!isNaN(num) && num > 0 && num < 100) {\n    user.personas_default = num;\n    response = `✅ Perfecto, sois *${num} persona${num===1?'':'s'}*.\\n\\nDime qué receta quieres hacer 🍽`;\n  } else {\n    response = `👋 ¡Hola! Soy tu asistente de recetas.\\n\\n¿Para cuántas personas quieres las listas de la compra?`;\n  }\n}\nelse {\n  const match = text.match(/\\bpara\\s+(\\d+)\\b/i);\n  const personasOverride = match ? parseInt(match[1]) : null;\n  const recetaLimpia = text.replace(/\\bpara\\s+\\d+\\s*personas?\\b/i, '').trim();\n  const personas = personasOverride || user.personas_default;\n  return [{\n    json: {\n      action: 'recipe_request',\n      chatId, uid,\n      receta: recetaLimpia,\n      personas,\n      vetos: user.vetos,\n      sustituciones: user.sustituciones\n    }\n  }];\n}\n\nreturn [{ json: { action: 'send_message', chatId, text: response, replyMarkup, answerCallbackId } }];"
+      },
+      "id": "router",
+      "name": "Router & Session",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "recipe_request", "operator": { "type": "string", "operation": "equals" } }],
+          "combinator": "and"
+        }
+      },
+      "id": "if-recipe",
+      "name": "¿Petición de receta?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $input.item.json;\nconst { receta, personas, vetos, sustituciones } = ctx;\nconst vetosStr = vetos.length ? vetos.join(', ') : 'ninguno';\nconst sustStr = Object.keys(sustituciones).length\n  ? Object.entries(sustituciones).map(([k,v]) => `${k} → ${v}`).join(', ')\n  : 'ninguna';\n\nconst systemPrompt = `Eres un chef experto. Genera recetas con ingredientes y cantidades precisas.\\n\\nContexto:\\n- Personas: ${personas}\\n- Ingredientes VETADOS: ${vetosStr}\\n- Sustituciones: ${sustStr}\\n\\nResponde ÚNICAMENTE con JSON válido sin texto adicional:\\n{\\n  \"nombre\": \"nombre receta\",\\n  \"esVetada\": false,\\n  \"motivoVeto\": null,\\n  \"ingredientes\": [{\"nombre\": \"\", \"cantidad\": 0, \"unidad\": \"\", \"sustituido\": false, \"original\": null}],\\n  \"preparacion\": \"2-3 frases\"\\n}\\n\\nReglas:\\n1. Escala cantidades para ${personas} personas\\n2. Si vetado es ESENCIAL: esVetada:true, explica en motivoVeto\\n3. Si hay sustitución: usa el sustituto, sustituido:true, original con nombre original\\n4. Vetado secundario: simplemente omítelo\\n5. cantidad:null si es al gusto`;\n\nconst apiKey = $env.OPENROUTER_API_KEY || '';\n\nconst requestBodyStr = JSON.stringify({\n  model: 'meta-llama/llama-3.3-70b-instruct:free',\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: 'Genera la receta de: \"' + receta + '\"' }\n  ],\n  temperature: 0.2,\n  max_tokens: 1500\n});\n\nreturn [{ json: { ...ctx, requestBodyStr, apiKey } }];"
+      },
+      "id": "build-prompt",
+      "name": "Preparar Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $json.apiKey }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.requestBodyStr }}",
+        "options": {}
+      },
+      "id": "deepseek",
+      "name": "DeepSeek: Generar Receta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const deepseekData = $input.item.json;\nconst ctx = $('Preparar Prompt').item.json;\nconst { chatId, uid, receta, personas } = ctx;\n\nconst content = deepseekData.choices?.[0]?.message?.content || '';\nlet recipe;\ntry {\n  const match = content.match(/```(?:json)?\\n?([\\s\\S]*?)\\n?```/) || [null, content];\n  recipe = JSON.parse(match[1].trim());\n} catch(e) {\n  return [{ json: { action: 'send_message', chatId, text: `❌ No encontré la receta de _${receta}_.\\n\\nIntenta con un nombre más concreto.`, replyMarkup: null, answerCallbackId: null } }];\n}\n\nif (recipe.esVetada) {\n  return [{ json: { action: 'send_message', chatId, text: `🚫 *${recipe.nombre}* no es posible con tus preferencias.\\n\\n_${recipe.motivoVeto}_\\n\\nPrueba con otra receta o revisa tus vetos con /perfil`, replyMarkup: null, answerCallbackId: null } }];\n}\n\nconst ingredientes = (recipe.ingredientes || []).map((ing, i) => ({\n  id: `ing_${Date.now()}_${i}`,\n  nombre: ing.nombre,\n  cantidad: ing.cantidad,\n  unidad: ing.unidad || null,\n  checked: false,\n  sustituido: ing.sustituido || false,\n  original: ing.original || null\n}));\n\nconst sd = $getWorkflowStaticData('global');\nif (!sd.users) sd.users = {};\nif (!sd.users[uid]) sd.users[uid] = {};\nsd.users[uid].pending_recipe = {\n  id: `rec_${Date.now()}`,\n  receta: recipe.nombre,\n  personas,\n  ingredientes\n};\n\nconst ingLines = ingredientes.map(ing => {\n  const qty = ing.cantidad != null ? `${ing.cantidad}${ing.unidad ? ' '+ing.unidad : ''}` : '';\n  const sub = ing.sustituido ? ` _(↔ ${ing.original})_` : '';\n  return `• ${ing.nombre}${qty ? ' — '+qty : ''}${sub}`;\n}).join('\\n');\n\nconst msgText = `🍽 *${recipe.nombre}* — para ${personas} persona${personas!==1?'s':''}\\n\\n📋 *Ingredientes:*\\n${ingLines}\\n\\n📝 *Preparación:*\\n${recipe.preparacion}\\n\\n¿Añado los ingredientes a la lista de la compra?`;\n\nreturn [{ json: {\n  action: 'send_recipe', chatId,\n  text: msgText,\n  replyMarkup: JSON.stringify({ inline_keyboard: [[{ text: '✅ Añadir a la lista', callback_data: 'add_recipe' }, { text: '❌ No añadir', callback_data: 'skip_recipe' }]] }),\n  answerCallbackId: null\n} }];"
+      },
+      "id": "process-recipe",
+      "name": "Procesar Receta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 160]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": { "parse_mode": "Markdown", "reply_markup": "={{ $json.replyMarkup }}" }
+      },
+      "id": "send-recipe",
+      "name": "Enviar Receta con Botones",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1680, 160],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "send-simple",
+      "name": "Enviar Mensaje Simple",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [960, 420],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "leftValue": "={{ $json.answerCallbackId }}", "rightValue": "", "operator": { "type": "string", "operation": "isNotEmpty" } }],
+          "combinator": "and"
+        }
+      },
+      "id": "if-callback",
+      "name": "¿Es callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1200, 420]
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "operation": "answerCallbackQuery",
+        "queryId": "={{ $json.answerCallbackId }}",
+        "additionalFields": {}
+      },
+      "id": "answer-callback",
+      "name": "Responder Callback Query",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1440, 420],
+      "credentials": { "telegramApi": { "id": "1", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "lista",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-lista",
+      "name": "GET /lista",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 620],
+      "webhookId": "lista-html"
+    },
+    {
+      "parameters": {
+        "jsCode": "const listId = $input.item.json.query?.id || '';\nconst botUser = $env.BOT_USERNAME || 'tu_bot';\n\nconst html = `<!DOCTYPE html>\n<html lang=\"es\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>Lista de la Compra</title>\n<style>\n*{box-sizing:border-box;margin:0;padding:0}\nbody{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;color:#1a1a1a}\n.header{background:linear-gradient(135deg,#1976D2,#42A5F5);color:white;padding:16px 20px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.2)}\n.header h1{font-size:20px;font-weight:700}\n.header-sub{font-size:12px;opacity:.85;margin-top:3px}\n.prog-bar{background:rgba(255,255,255,.3);border-radius:10px;height:4px;margin-top:8px}\n.prog-fill{background:white;height:100%;border-radius:10px;transition:width .4s}\n.tabs{display:flex;background:white;box-shadow:0 1px 0 #e0e0e0}\n.tab{flex:1;padding:13px 0;text-align:center;cursor:pointer;font-size:14px;font-weight:500;color:#666;border-bottom:3px solid transparent;transition:all .2s}\n.tab.active{color:#1976D2;border-bottom-color:#1976D2}\n.content{padding:16px;max-width:640px;margin:0 auto}\n.card{background:white;border-radius:14px;margin-bottom:14px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)}\n.card-header{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;cursor:pointer}\n.card-title{font-weight:700;font-size:16px}\n.card-meta{font-size:12px;color:#888;margin-top:2px}\n.card-right{display:flex;align-items:center;gap:8px}\n.badge{font-size:13px;color:#1976D2;font-weight:600;background:#E3F2FD;padding:3px 8px;border-radius:12px}\n.btn-del{background:none;border:none;cursor:pointer;color:#e53935;font-size:17px;padding:4px 6px;border-radius:8px}\n.chevron{font-size:12px;color:#bbb;transition:transform .25s}\n.collapsed .chevron{transform:rotate(-90deg)}\n.collapsed .items{display:none}\n.prog-card{background:#f0f0f0;height:3px}\n.prog-card-fill{background:#4CAF50;height:100%;transition:width .4s}\n.items{border-top:1px solid #f5f5f5}\n.item{display:flex;align-items:center;padding:11px 16px;border-bottom:1px solid #fafafa;gap:12px}\n.item:hover{background:#fafafa}\n.item input{width:20px;height:20px;cursor:pointer;accent-color:#1976D2;flex-shrink:0}\n.iname{flex:1;font-size:15px;transition:all .2s}\n.iname.done{text-decoration:line-through;color:#bbb}\n.isub{font-size:11px;color:#FF7043;margin-top:1px}\n.iqty{font-size:13px;color:#999;white-space:nowrap;font-weight:500}\n.sec-label{font-size:11px;text-transform:uppercase;letter-spacing:.8px;font-weight:700;color:#999;padding:16px 4px 8px}\n.empty{text-align:center;padding:80px 24px}\n.empty-icon{font-size:64px;margin-bottom:16px}\n.empty-title{font-size:18px;font-weight:600;color:#444;margin-bottom:8px}\n.add-btn{display:flex;align-items:center;justify-content:center;gap:8px;background:#1976D2;color:white;border:none;padding:15px 24px;border-radius:28px;font-size:15px;font-weight:600;cursor:pointer;width:100%;margin-top:8px;margin-bottom:24px;box-shadow:0 3px 10px rgba(25,118,210,.4)}\n.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#323232;color:white;padding:10px 22px;border-radius:22px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .25s;z-index:999;white-space:nowrap}\n.toast.on{opacity:1}\n.spin{width:36px;height:36px;border:3px solid #e0e0e0;border-top-color:#1976D2;border-radius:50%;animation:s .8s linear infinite;margin:0 auto 16px}\n@keyframes s{to{transform:rotate(360deg)}}\n.loading{text-align:center;padding:60px;color:#aaa}\n</style>\n</head>\n<body>\n<div class=\"header\">\n  <h1>🛒 Lista de la Compra</h1>\n  <div class=\"header-sub\" id=\"hsub\">Cargando...</div>\n  <div class=\"prog-bar\"><div class=\"prog-fill\" id=\"hprog\" style=\"width:0%\"></div></div>\n</div>\n<div class=\"tabs\">\n  <div class=\"tab active\" onclick=\"tab('r')\" id=\"tr\">🍽 Por receta</div>\n  <div class=\"tab\" onclick=\"tab('c')\" id=\"tc\">📋 Consolidada</div>\n</div>\n<div id=\"vr\" class=\"content\"></div>\n<div id=\"vc\" class=\"content\" style=\"display:none\"></div>\n<div class=\"toast\" id=\"toast\"></div>\n<script>\nconst P=new URLSearchParams(location.search),lid=P.get('id'),BOT='${botUser}',API=location.origin;\nlet data={recetas:[]},activeTab='r';\nasync function load(){\n  if(!lid){err('Sin ID de lista');return;}\n  try{\n    const r=await fetch(API+'/webhook/lista-data?id='+lid);\n    if(!r.ok)throw new Error();\n    data=await r.json();\n    render();\n  }catch(e){err('No se pudo cargar la lista. ¿Está n8n activo?');}\n}\nfunction err(m){document.getElementById('vr').innerHTML='<div class=\"empty\"><div class=\"empty-icon\">❌</div><div class=\"empty-title\">'+m+'</div></div>';}\nfunction tab(t){\n  activeTab=t;\n  document.getElementById('tr').classList.toggle('active',t==='r');\n  document.getElementById('tc').classList.toggle('active',t==='c');\n  document.getElementById('vr').style.display=t==='r'?'':'none';\n  document.getElementById('vc').style.display=t==='c'?'':'none';\n}\nfunction esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}\nfunction fqty(i){if(!i.cantidad&&!i.unidad)return '';const q=i.cantidad!=null?(Number.isInteger(i.cantidad)?i.cantidad:parseFloat(i.cantidad.toFixed(1))):'';return (q+' '+(i.unidad||'')).trim();}\nfunction render(){\n  const rs=data.recetas||[];\n  const tot=rs.reduce((s,r)=>s+r.ingredientes.length,0);\n  const don=rs.reduce((s,r)=>s+r.ingredientes.filter(i=>i.checked).length,0);\n  const pct=tot>0?Math.round(don/tot*100):0;\n  document.getElementById('hsub').textContent=rs.length+' receta'+(rs.length!==1?'s':'')+' · '+tot+' ingrediente'+(tot!==1?'s':'')+(tot>0?' · '+don+'/'+tot+' en carro':'');\n  document.getElementById('hprog').style.width=pct+'%';\n  renderR(rs);renderC(rs);\n}\nfunction renderR(rs){\n  const el=document.getElementById('vr');\n  if(!rs.length){el.innerHTML='<div class=\"empty\"><div class=\"empty-icon\">🍽</div><div class=\"empty-title\">Lista vacía</div><p style=\"color:#888;margin-top:8px\">Pídele una receta al bot para empezar</p></div>';return;}\n  el.innerHTML=rs.map(rec=>{\n    const tot=rec.ingredientes.length,chk=rec.ingredientes.filter(i=>i.checked).length,pct=tot>0?chk/tot*100:0;\n    return '<div class=\"card\" id=\"card-'+rec.id+'\">'+\n      '<div class=\"card-header\" onclick=\"tog(\\''+rec.id+'\\')\">'+'<div><div class=\"card-title\">'+esc(rec.receta)+'</div><div class=\"card-meta\">Para '+rec.personas+' persona'+(rec.personas!==1?'s':'')+'</div></div>'+'<div class=\"card-right\"><span class=\"badge\">'+chk+'/'+tot+'</span><button class=\"btn-del\" onclick=\"event.stopPropagation();del(\\''+rec.id+'\\',\\''+esc(rec.receta)+'\\')\" title=\"Eliminar\">🗑</button><span class=\"chevron\">▼</span></div></div>'+\n      '<div class=\"prog-card\"><div class=\"prog-card-fill\" style=\"width:'+pct+'%\"></div></div>'+\n      '<div class=\"items\">'+rec.ingredientes.map(ing=>'<div class=\"item\"><input type=\"checkbox\" id=\"c-'+ing.id+'\" '+(ing.checked?'checked':'')+' onchange=\"toggleItem(\\''+rec.id+'\\',\\''+ing.id+'\\',this.checked)\"><label for=\"c-'+ing.id+'\" style=\"flex:1;cursor:pointer\"><div class=\"iname'+(ing.checked?' done':'')+'\">'+esc(ing.nombre)+'</div>'+(ing.sustituido?'<div class=\"isub\">✱ sustituido de '+esc(ing.original)+'</div>':'')+'</label><span class=\"iqty\">'+fqty(ing)+'</span></div>').join('')+'</div></div>';\n  }).join('')+'<button class=\"add-btn\" onclick=\"window.open(\\'https://t.me/'+BOT+'\\',\\'_blank\\')\">+ Añadir otra receta</button>';\n}\nfunction renderC(rs){\n  const el=document.getElementById('vc');\n  if(!rs.length){el.innerHTML='<div class=\"empty\"><div class=\"empty-icon\">📋</div><div class=\"empty-title\">Sin ingredientes</div></div>';return;}\n  const map={};\n  rs.forEach(rec=>rec.ingredientes.forEach(ing=>{\n    const key=ing.nombre.trim().toLowerCase();\n    if(map[key]){map[key].recetas.push(rec.receta);if(ing.unidad&&map[key].unidad===ing.unidad&&ing.cantidad!=null)map[key].cantidad=(parseFloat(map[key].cantidad)||0)+parseFloat(ing.cantidad);if(!ing.checked)map[key].checked=false;map[key].refs.push({rId:rec.id,iId:ing.id});}\n    else map[key]={nombre:ing.nombre,cantidad:ing.cantidad,unidad:ing.unidad,checked:ing.checked,recetas:[rec.receta],refs:[{rId:rec.id,iId:ing.id}]};\n  }));\n  const items=Object.values(map),pend=items.filter(i=>!i.checked),done=items.filter(i=>i.checked);\n  let h='';\n  if(pend.length)h+='<div class=\"card\"><div class=\"items\">'+pend.map(i=>cItem(i)).join('')+'</div></div>';\n  if(done.length)h+='<div class=\"sec-label\">✓ Ya en el carro</div><div class=\"card\" style=\"opacity:.6\"><div class=\"items\">'+done.map(i=>cItem(i)).join('')+'</div></div>';\n  el.innerHTML=h+'<button class=\"add-btn\" onclick=\"window.open(\\'https://t.me/'+BOT+'\\',\\'_blank\\')\">+ Añadir otra receta</button>';\n}\nfunction cItem(ing){\n  const key=ing.nombre.trim().toLowerCase();\n  return '<div class=\"item\"><input type=\"checkbox\" id=\"cons-'+key+'\" '+(ing.checked?'checked':'')+' onchange=\"toggleCons(\\''+key+'\\',this.checked,'+JSON.stringify(ing.refs)+')\"><label for=\"cons-'+key+'\" style=\"flex:1;cursor:pointer\"><div class=\"iname'+(ing.checked?' done':'')+'\">'+esc(ing.nombre)+'</div><div class=\"isub\" style=\"color:#999\">'+ing.recetas.join(' · ')+'</div></label><span class=\"iqty\">'+fqty(ing)+'</span></div>';\n}\nfunction tog(id){document.getElementById('card-'+id)?.classList.toggle('collapsed');}\nasync function toggleItem(rId,iId,checked){\n  const rec=data.recetas.find(r=>r.id===rId);if(rec){const i=rec.ingredientes.find(i=>i.id===iId);if(i)i.checked=checked;}\n  render();toast(checked?'✓ En el carro':'Quitado');\n  await fetch(API+'/webhook/lista-toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listId:lid,recipeId:rId,ingId:iId,checked})}).catch(()=>{});\n}\nasync function toggleCons(key,checked,refs){\n  refs.forEach(({rId,iId})=>{const rec=data.recetas.find(r=>r.id===rId);if(rec){const i=rec.ingredientes.find(i=>i.id===iId);if(i)i.checked=checked;}});\n  render();toast(checked?'✓ En el carro':'Quitado');\n  await Promise.allSettled(refs.map(({rId,iId})=>fetch(API+'/webhook/lista-toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listId:lid,recipeId:rId,ingId:iId,checked})}))).catch(()=>{});\n}\nasync function del(rId,nombre){\n  if(!confirm('¿Eliminar \"'+nombre+'\" de la lista?'))return;\n  data.recetas=data.recetas.filter(r=>r.id!==rId);render();toast('Receta eliminada');\n  await fetch(API+'/webhook/lista-eliminar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listId:lid,recipeId:rId})}).catch(()=>{});\n}\nlet tt;function toast(m){const el=document.getElementById('toast');el.textContent=m;el.classList.add('on');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('on'),2000);}\ndocument.getElementById('vr').innerHTML='<div class=\"loading\"><div class=\"spin\"></div>Cargando...</div>';\nload();setInterval(load,30000);\n</script>\n</body>\n</html>`;\n\nreturn [{ json: { html } }];"
+      },
+      "id": "serve-html",
+      "name": "Servir HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 620]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "text/html; charset=utf-8" }]
+          }
+        }
+      },
+      "id": "respond-html",
+      "name": "Responder HTML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 620]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "lista-data",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-data",
+      "name": "GET /lista-data",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 800],
+      "webhookId": "lista-data"
+    },
+    {
+      "parameters": {
+        "jsCode": "const listId = $input.item.json.query?.id;\nif (!listId) return [{ json: { recetas: [] } }];\nconst sd = $getWorkflowStaticData('global');\nconst users = sd.users || {};\nfor (const uid of Object.keys(users)) {\n  const user = users[uid];\n  if (user.lista_id === listId && user.listas?.[listId]) {\n    return [{ json: user.listas[listId] }];\n  }\n}\nreturn [{ json: { recetas: [] } }];"
+      },
+      "id": "get-data",
+      "name": "Obtener Datos Lista",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 800]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": { "responseHeaders": { "entries": [{ "name": "Access-Control-Allow-Origin", "value": "*" }] } }
+      },
+      "id": "respond-data",
+      "name": "Responder JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 800]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lista-toggle",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-toggle",
+      "name": "POST /lista-toggle",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 980],
+      "webhookId": "lista-toggle"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { listId, recipeId, ingId, checked } = $input.item.json.body || {};\nconst sd = $getWorkflowStaticData('global');\nfor (const uid of Object.keys(sd.users || {})) {\n  const user = sd.users[uid];\n  if (user.lista_id === listId && user.listas?.[listId]) {\n    const rec = user.listas[listId].recetas.find(r => r.id === recipeId);\n    if (rec) { const ing = rec.ingredientes.find(i => i.id === ingId); if (ing) ing.checked = Boolean(checked); }\n    break;\n  }\n}\nreturn [{ json: { ok: true } }];"
+      },
+      "id": "toggle-item",
+      "name": "Toggle Ingrediente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 980]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"ok\":true}",
+        "options": { "responseHeaders": { "entries": [{ "name": "Access-Control-Allow-Origin", "value": "*" }] } }
+      },
+      "id": "respond-toggle",
+      "name": "Responder Toggle",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 980]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lista-eliminar",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-eliminar",
+      "name": "POST /lista-eliminar",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 1160],
+      "webhookId": "lista-eliminar"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { listId, recipeId } = $input.item.json.body || {};\nconst sd = $getWorkflowStaticData('global');\nfor (const uid of Object.keys(sd.users || {})) {\n  const user = sd.users[uid];\n  if (user.lista_id === listId && user.listas?.[listId]) {\n    user.listas[listId].recetas = user.listas[listId].recetas.filter(r => r.id !== recipeId);\n    break;\n  }\n}\nreturn [{ json: { ok: true } }];"
+      },
+      "id": "remove-recipe",
+      "name": "Eliminar Receta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 1160]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"ok\":true}",
+        "options": { "responseHeaders": { "entries": [{ "name": "Access-Control-Allow-Origin", "value": "*" }] } }
+      },
+      "id": "respond-eliminar",
+      "name": "Responder Eliminar",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 1160]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": { "main": [[{ "node": "Router & Session", "type": "main", "index": 0 }]] },
+    "Router & Session": { "main": [[{ "node": "¿Petición de receta?", "type": "main", "index": 0 }]] },
+    "¿Petición de receta?": { "main": [
+      [{ "node": "Preparar Prompt", "type": "main", "index": 0 }],
+      [{ "node": "Enviar Mensaje Simple", "type": "main", "index": 0 }]
+    ]},
+    "Preparar Prompt": { "main": [[{ "node": "DeepSeek: Generar Receta", "type": "main", "index": 0 }]] },
+    "DeepSeek: Generar Receta": { "main": [[{ "node": "Procesar Receta", "type": "main", "index": 0 }]] },
+    "Procesar Receta": { "main": [[{ "node": "Enviar Receta con Botones", "type": "main", "index": 0 }]] },
+    "Enviar Mensaje Simple": { "main": [[{ "node": "¿Es callback?", "type": "main", "index": 0 }]] },
+    "¿Es callback?": { "main": [[{ "node": "Responder Callback Query", "type": "main", "index": 0 }], []] },
+    "GET /lista": { "main": [[{ "node": "Servir HTML", "type": "main", "index": 0 }]] },
+    "Servir HTML": { "main": [[{ "node": "Responder HTML", "type": "main", "index": 0 }]] },
+    "GET /lista-data": { "main": [[{ "node": "Obtener Datos Lista", "type": "main", "index": 0 }]] },
+    "Obtener Datos Lista": { "main": [[{ "node": "Responder JSON", "type": "main", "index": 0 }]] },
+    "POST /lista-toggle": { "main": [[{ "node": "Toggle Ingrediente", "type": "main", "index": 0 }]] },
+    "Toggle Ingrediente": { "main": [[{ "node": "Responder Toggle", "type": "main", "index": 0 }]] },
+    "POST /lista-eliminar": { "main": [[{ "node": "Eliminar Receta", "type": "main", "index": 0 }]] },
+    "Eliminar Receta": { "main": [[{ "node": "Responder Eliminar", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
