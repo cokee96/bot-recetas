@@ -1,2 +1,9 @@
 .env
 node_modules/
+
+# Claude Code internal files
+.claude/
+CLAUDE.md
+BUGS.md
+PROGRESS.md
+SESSION_STATE.md
