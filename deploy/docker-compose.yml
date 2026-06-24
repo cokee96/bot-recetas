@@ -1,0 +1,35 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - WEBHOOK_URL=https://${TUNNEL_HOSTNAME}
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - NODE_OPTIONS=--dns-result-order=ipv4first
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BOT_USERNAME=${BOT_USERNAME}
+      - GENERIC_TIMEZONE=Europe/Madrid
+      - TZ=Europe/Madrid
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - cloudflared
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    volumes:
+      - cloudflared_data:/etc/cloudflared
+
+volumes:
+  n8n_data:
+  cloudflared_data:
